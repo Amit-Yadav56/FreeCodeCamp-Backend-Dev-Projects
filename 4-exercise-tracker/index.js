@@ -1,120 +1,83 @@
 const express = require('express')
 const app = express()
 const cors = require('cors')
-const mongoose = require('mongoose');
-const ObjectId = require('mongoose').Types.ObjectId;
-const { Schema } = mongoose
-const bodyParser = require('body-parser');
 require('dotenv').config()
 
-app.use(bodyParser.urlencoded({ extended: false }))
-app.use(bodyParser.json())
+const users = [];
+
+function User(username, id) {
+  this.username = username;
+  this._id = id;
+  this.log = [];
+}
+
+users.push(new User('testUser', '0'))
+
 app.use(cors())
 app.use(express.static('public'))
+app.use(express.json()) // for parsing application/json
+app.use(express.urlencoded({ extended: true })) // for parsing application/x-www-form-urlencoded
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/views/index.html')
 });
 
-main().catch(err => console.log(err))
-
-async function main() {
-  await mongoose.connect('mongodb://localhost:27017/freecode')
-}
-
-const userSchema = new Schema({
-  username: { type: String, require: true, unique: true },
-  exercises: [{
-    description: String,
-    duration: Number,
-    date: Date
-  }]
-}, { versionKey: false })
-
-const User = mongoose.model('User', userSchema)
-const ERROR = { error: "There was an error while getting the users." };
-
-app.get('/api/users', (req, res) => {
-  User.find({}, (err, data) => {
-    if (err) return res.send(ERROR)
-    res.json(data)
+app.route('/api/users')
+  .get((req, res) => {
+    res.json(users)
   })
-})
+  .post((req, res) => {
+    const id = users.length
+    const username = req.body.username
+    users.push(new User(username, id))
+    res.json({ username: username, _id: id })
+  })
 
-app.get('/api/users/:id/logs', (req, res) => {
-  const id = req.params.id;
-  const dateFrom = new Date(req.query.from);
-  const dateTo = new Date(req.query.to);
-  const limit = parseInt(req.query.limit);
-
-  User.findOne({ _id: new ObjectId(id) }, (err, data) => {
-    if (err) return res.send(ERROR)
-
-    let log = [];
-
-    data.exercises.filter(exercise =>
-      new Date(Date.parse(exercise.date)).getTime() > dateFrom
-      && new Date(Date.parse(exercise.date)).getTime() < dateTo
-    )
-
-    for (const exercise of data.exercises) {
-      log.push({
-        description: exercise.description,
-        duration: exercise.duration,
-        date: new Date(exercise.date).toDateString()
-      })
+app.post('/api/users/:_id/exercises', (req, res) => {
+  const description = req.body.description;
+  const duration = +req.body.duration;
+  const date = req.body.date;
+  const id = req.params._id;
+  const user = users[id]
+  if (!duration || !description) {
+    return res.json({ error: 'missing parameters' })
+  } else {
+    let dateString;
+    if (date) {
+      dateString = new Date(date).toDateString()
+    } else {
+      dateString = new Date().toDateString()
     }
 
-    if (limit) log = log.slice(0, limit)
-
+    user.log.push({ description: description, duration: duration, date: dateString });
+    user.count = user.log.length;
     res.json({
-      _id: data._id,
-      username: data.username,
-      count: log.length,
-      log: log
-    })
-  })
-})
-
-app.post('/api/users', async (req, res) => {
-  try {
-    const username = req.body.username;
-    const newUser = await User.create({ username });
-    res.json({ _id: newUser._id, username: newUser.username });
-  } catch (err) {
-    res.status(500).json(ERROR);
-  }
-});
-
-app.post('/api/users/:id/exercises', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { description, duration, date } = req.body;
-
-    const newExercise = {
+      username: user.username,
       description: description,
       duration: duration,
-      date: date ? new Date(date).toDateString() : new Date().toDateString()
-    };
-
-    const user = await User.findOne({ _id: new ObjectId(id) });
-    if (!user) return res.send(ERROR);
-
-    user.exercises.push(newExercise);
-    await user.save();
-
-    const response = {
-      username: user.username,
-      description: user.exercises[user.exercises.length - 1].description,
-      duration: user.exercises[user.exercises.length - 1].duration,
-      date: new Date(user.exercises[user.exercises.length - 1].date).toDateString(),
+      date: dateString,
       _id: user._id
-    };
-
-    res.json(response);
-  } catch (err) {
-    res.status(500).json(ERROR);
+    })
   }
-});
+})
+
+app.route('/api/users/:_id/logs')
+  .get((req, res) => {
+    const id = req.params._id;
+    const limit = Number(req.query.limit) || 0;
+    const response = users[id];
+    let newlog = response.log
+    if (req.query.from && req.query.to) {
+      const from = new Date(req.query.from).getTime();
+      const to = new Date(req.query.to).getTime();
+      newlog = newlog.filter(item => from <= new Date(item.date).getTime() <= to)
+    }
+
+    if (limit > 0) {
+      newlog = newlog.slice(0, limit)
+    }
+    response.log = newlog
+    res.json(response)
+  })
 
 const listener = app.listen(process.env.PORT || 3000, () => {
   console.log('Your app is listening on port ' + listener.address().port)
